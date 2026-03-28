@@ -7,8 +7,10 @@ from fastapi import HTTPException
 from app.models.question import Question, QuestionCompany
 from app.models.meta import Company, Position
 from app.models.user import User
+from app.models.social import Favorite, OriginalConfirm
 from app.schemas.question import QuestionCreateRequest, QuestionType, RecruitType, RoundType, SortBy
 from app.services.auth_service import LEVEL_TITLES, LEVEL_ICONS
+from app.services.user_service import reset_daily_free_if_needed
 
 DAILY_FREE_LIMIT = 3
 MAX_REWARD_PER_QUESTION = 5.0
@@ -39,6 +41,19 @@ async def _build_question_item(db: AsyncSession, q: Question, current_user_id: O
     if q.interview_year:
         interview_time = f"{q.interview_year}-Q{q.interview_quarter}" if q.interview_quarter else str(q.interview_year)
 
+    is_favorited = None
+    is_confirmed = None
+    if current_user_id:
+        fav = (await db.execute(
+            select(Favorite).where(Favorite.user_id == current_user_id, Favorite.question_id == q.id)
+        )).scalar_one_or_none()
+        is_favorited = fav is not None
+
+        conf = (await db.execute(
+            select(OriginalConfirm).where(OriginalConfirm.user_id == current_user_id, OriginalConfirm.question_id == q.id)
+        )).scalar_one_or_none()
+        is_confirmed = conf is not None
+
     return {
         "id": q.id,
         "type": q.type,
@@ -52,8 +67,8 @@ async def _build_question_item(db: AsyncSession, q: Question, current_user_id: O
         "confirm_count": q.confirm_count,
         "comment_count": q.comment_count,
         "favorite_count": q.favorite_count,
-        "is_favorited": False if current_user_id else None,
-        "is_confirmed": False if current_user_id else None,
+        "is_favorited": is_favorited,
+        "is_confirmed": is_confirmed,
         "uploader": {
             "id": uploader.id,
             "nickname": uploader.nickname,
@@ -137,6 +152,7 @@ class QuestionService:
         user_result = await db.execute(select(User).where(User.id == user_id))
         user = user_result.scalar_one_or_none()
         if user and not user.is_member:
+            reset_daily_free_if_needed(user)
             if (user.daily_free_used or 0) >= DAILY_FREE_LIMIT:
                 raise HTTPException(status_code=403, detail={"code": 40006, "message": "免费额度已用完，请开通会员"})
             user.daily_free_used = (user.daily_free_used or 0) + 1

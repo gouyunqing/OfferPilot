@@ -1,13 +1,26 @@
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from fastapi import HTTPException
 
 from app.models.user import User
 from app.models.question import Question
+from app.models.comment import Comment
+from app.models.social import OriginalConfirm, Favorite
 from app.schemas.user import UserUpdateRequest
 from app.services.auth_service import LEVEL_TITLES, LEVEL_ICONS, EXP_TO_LEVEL
 
 DAILY_FREE_LIMIT = 3
+
+
+def reset_daily_free_if_needed(user: User) -> None:
+    """如果上次重置日期不是今天，重置每日免费次数"""
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    last_reset = user.daily_free_reset_at
+    if last_reset is None or last_reset.date() < today:
+        user.daily_free_used = 0
+        user.daily_free_reset_at = now
 
 
 def _exp_to_next(level: int, exp: int) -> int:
@@ -25,8 +38,26 @@ class UserService:
         if not user:
             raise HTTPException(status_code=404, detail={"code": 40004, "message": "用户不存在"})
 
-        q_count = await db.execute(select(func.count()).where(Question.uploader_id == user_id))
-        question_count = q_count.scalar() or 0
+        reset_daily_free_if_needed(user)
+
+        question_count = (await db.execute(
+            select(func.count()).where(Question.uploader_id == user_id)
+        )).scalar() or 0
+
+        comment_count = (await db.execute(
+            select(func.count()).where(Comment.user_id == user_id)
+        )).scalar() or 0
+
+        # 收到的确认数 = 我上传的题目被别人确认的次数
+        confirm_received_count = (await db.execute(
+            select(func.count()).select_from(OriginalConfirm)
+            .join(Question, OriginalConfirm.question_id == Question.id)
+            .where(Question.uploader_id == user_id)
+        )).scalar() or 0
+
+        favorite_count = (await db.execute(
+            select(func.count()).where(Favorite.user_id == user_id)
+        )).scalar() or 0
 
         daily_remaining = max(0, DAILY_FREE_LIMIT - (user.daily_free_used or 0))
 
@@ -46,9 +77,9 @@ class UserService:
             "member_expires_at": user.member_expires_at,
             "balance": user.balance,
             "question_count": question_count,
-            "comment_count": 0,  # TODO: join count
-            "confirm_received_count": 0,  # TODO: join count
-            "favorite_count": 0,  # TODO: join count
+            "comment_count": comment_count,
+            "confirm_received_count": confirm_received_count,
+            "favorite_count": favorite_count,
             "daily_free_remaining": daily_remaining,
             "created_at": user.created_at,
         }
@@ -71,8 +102,16 @@ class UserService:
         user = result.scalar_one_or_none()
         if not user:
             raise HTTPException(status_code=404, detail={"code": 40004, "message": "用户不存在"})
-        q_count = await db.execute(select(func.count()).where(Question.uploader_id == user_id))
-        question_count = q_count.scalar() or 0
+        question_count = (await db.execute(
+            select(func.count()).where(Question.uploader_id == user_id)
+        )).scalar() or 0
+
+        confirm_received_count = (await db.execute(
+            select(func.count()).select_from(OriginalConfirm)
+            .join(Question, OriginalConfirm.question_id == Question.id)
+            .where(Question.uploader_id == user_id)
+        )).scalar() or 0
+
         return {
             "id": user.id,
             "nickname": user.nickname,
@@ -82,7 +121,7 @@ class UserService:
             "level_icon": LEVEL_ICONS.get(user.level, "🌱"),
             "exp": user.exp,
             "question_count": question_count,
-            "confirm_received_count": 0,
+            "confirm_received_count": confirm_received_count,
             "created_at": user.created_at,
         }
 
