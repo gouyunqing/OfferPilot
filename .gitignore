@@ -1,0 +1,46 @@
+# ===== 敏感配置（绝不上传）=====
+.env
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.cover
+.coverage
+htmlcov/
+
+# ===== 虚拟环境 =====
+.venv/
+venv/
+env/
+ENV/
+
+# ===== 测试 / 临时文件 =====
+test_e2e.py
+*.log
+*.tmp
+*.bak
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# ===== 产品文档（不上传）=====
+产品文档/
