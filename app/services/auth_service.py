@@ -99,14 +99,29 @@ class AuthService:
 
     @staticmethod
     async def wechat_login(db: AsyncSession, body: WechatLoginRequest) -> dict:
-        """
-        微信授权码换 openid。
-        TODO: 替换 mock，调用真实微信 API:
-          GET https://api.weixin.qq.com/sns/jscode2session
-              ?appid=&secret=&js_code=&grant_type=authorization_code
-        """
-        # Mock: 直接用 code 派生 openid，便于本地测试
-        openid = f"wx_{body.code[:16]}"
+        """微信小程序授权码换 openid，再查找或创建用户"""
+        import httpx
+
+        url = "https://api.weixin.qq.com/sns/jscode2session"
+        params = {
+            "appid": settings.WECHAT_APP_ID,
+            "secret": settings.WECHAT_APP_SECRET,
+            "js_code": body.code,
+            "grant_type": "authorization_code",
+        }
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, params=params, timeout=10)
+            data = resp.json()
+
+        if data.get("errcode"):
+            raise HTTPException(
+                status_code=400,
+                detail={"code": 40008, "message": f"微信登录失败: {data.get('errmsg', '未知错误')}"},
+            )
+
+        openid = data["openid"]
+        unionid = data.get("unionid")
 
         result = await db.execute(select(User).where(User.wechat_openid == openid))
         user = result.scalar_one_or_none()
@@ -114,9 +129,14 @@ class AuthService:
         if not user:
             user = _new_trial_user(f"微信用户{uuid.uuid4().hex[:4].upper()}")
             user.wechat_openid = openid
+            if unionid:
+                user.wechat_unionid = unionid
             db.add(user)
             await db.flush()
             is_new = True
+        elif unionid and not user.wechat_unionid:
+            user.wechat_unionid = unionid
+
         return _build_token_response(user, is_new)
 
     @staticmethod
