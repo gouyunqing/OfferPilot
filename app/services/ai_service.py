@@ -109,8 +109,9 @@ class AiService:
                 await db.commit()
 
         except Exception as e:
-            error_msg = str(e)
-            yield f"event: error\ndata: {json.dumps({'code': 50002, 'message': f'AI 服务异常: {error_msg}'}, ensure_ascii=False)}\n\n"
+            import logging
+            logging.exception("AI service error: %s", e)
+            yield f"event: error\ndata: {json.dumps({'code': 50002, 'message': 'AI 服务暂时不可用，请稍后重试'}, ensure_ascii=False)}\n\n"
 
     @staticmethod
     async def get_cached_answer(db: AsyncSession, user_id: str, question_id: str) -> Optional[dict]:

@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from fastapi import HTTPException
 
 from app.models.comment import Comment, CommentVote
@@ -29,7 +29,6 @@ class CommentService:
         page_size: int,
         current_user_id: Optional[str],
     ) -> dict:
-        from sqlalchemy import func
         stmt = select(Comment).where(Comment.question_id == question_id)
         if sort_by == "latest":
             stmt = stmt.order_by(Comment.created_at.desc())
@@ -41,25 +40,34 @@ class CommentService:
         result = await db.execute(stmt.offset(offset).limit(page_size))
         comments = result.scalars().all()
 
-        # Determine if current user is member (for blur)
+        if not comments:
+            return {"items": [], "total": total, "page": page, "page_size": page_size, "has_more": False}
+
+        # 判断当前用户是否会员（用于模糊）
         is_member = False
         if current_user_id:
             u = (await db.execute(select(User).where(User.id == current_user_id))).scalar_one_or_none()
             is_member = bool(u and u.is_member)
 
+        # 批量查询评论作者
+        user_ids = list({c.user_id for c in comments})
+        users_result = await db.execute(select(User).where(User.id.in_(user_ids)))
+        users_map = {u.id: u for u in users_result.scalars().all()}
+
+        # 批量查询当前用户的投票记录
+        votes_map = {}
+        if current_user_id:
+            comment_ids = [c.id for c in comments]
+            votes_result = await db.execute(
+                select(CommentVote)
+                .where(CommentVote.user_id == current_user_id, CommentVote.comment_id.in_(comment_ids))
+            )
+            votes_map = {v.comment_id: v.vote_type for v in votes_result.scalars().all()}
+
         items = []
+        blurred = not is_member
         for c in comments:
-            u = (await db.execute(select(User).where(User.id == c.user_id))).scalar_one_or_none()
-            blurred = not is_member
-            my_vote = None
-            if current_user_id:
-                v = (await db.execute(
-                    select(CommentVote).where(
-                        CommentVote.comment_id == c.id,
-                        CommentVote.user_id == current_user_id,
-                    )
-                )).scalar_one_or_none()
-                my_vote = v.vote_type if v else None
+            u = users_map.get(c.user_id)
             items.append({
                 "id": c.id,
                 "content": c.content[:20] + "..." if blurred else c.content,
@@ -72,7 +80,7 @@ class CommentService:
                 },
                 "upvotes": c.upvotes,
                 "downvotes": c.downvotes,
-                "my_vote": my_vote,
+                "my_vote": votes_map.get(c.id),
                 "created_at": c.created_at,
             })
         return {
