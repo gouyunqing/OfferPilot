@@ -29,8 +29,12 @@ class Settings(BaseSettings):
     ALIYUN_SMS_TEMPLATE_CODE: str = ""
 
     # AI
+    AI_PROVIDER: str = "dashscope"  # dashscope or deepseek
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
+    DASHSCOPE_API_KEY: str = ""
+    DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    DASHSCOPE_MODEL: str = "qwen-plus"
 
     # Apple IAP
     APPLE_BUNDLE_ID: str = "com.offerpilot.app"
